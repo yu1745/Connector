@@ -7,6 +7,9 @@ import net.fabricmc.fabric.api.client.render.fluid.v1.FluidRenderHandlerRegistry
 import net.fabricmc.fabric.api.transfer.v1.fluid.FluidVariant;
 import net.fabricmc.fabric.api.transfer.v1.fluid.FluidVariantAttributes;
 import net.minecraft.client.renderer.texture.TextureAtlasSprite;
+import net.minecraft.client.renderer.texture.TextureAtlas;
+import net.minecraft.client.renderer.texture.MissingTextureAtlasSprite;
+import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceKey;
@@ -92,26 +95,45 @@ public final class FluidHandlerCompat {
         public void initializeClient(Consumer<IClientFluidTypeExtensions> consumer) {
             consumer.accept(new IClientFluidTypeExtensions() {
                 private TextureAtlasSprite[] getSprites() {
+                    // Fabric's SimpleFluidRenderHandler caches sprites and fills them from
+                    // FluidRenderHandler.reloadTextures during the Fabric resource-reload
+                    // hook. Forge's TextureStitchEvent.Post can reach this adapter first,
+                    // so initialize the handler against the already stitched block atlas.
+                    if (renderHandler == null) {
+                        LOGGER.warn("Missing Fabric FluidRenderHandler for {}", ForgeRegistries.FLUIDS.getKey(fluid));
+                        return new TextureAtlasSprite[0];
+                    }
+                    TextureAtlas atlas = (TextureAtlas) Minecraft.getInstance()
+                            .getTextureManager()
+                            .getTexture(TextureAtlas.LOCATION_BLOCKS);
+                    renderHandler.reloadTextures(atlas);
                     return renderHandler.getFluidSprites(null, null, fluid.defaultFluidState());
+                }
+
+                private ResourceLocation spriteName(TextureAtlasSprite[] sprites, int index, String kind) {
+                    ResourceLocation id = ForgeRegistries.FLUIDS.getKey(fluid);
+                    if (sprites == null || sprites.length <= index || sprites[index] == null) {
+                        LOGGER.warn("Missing {} sprite for Fabric fluid {}", kind, id);
+                        return MissingTextureAtlasSprite.getLocation();
+                    }
+                    return sprites[index].contents().name();
                 }
 
                 @Override
                 public ResourceLocation getStillTexture() {
-                    TextureAtlasSprite[] sprites = getSprites();
-                    return sprites[0].contents().name();
+                    return spriteName(getSprites(), 0, "still");
                 }
 
                 @Override
                 public ResourceLocation getFlowingTexture() {
-                    TextureAtlasSprite[] sprites = getSprites();
-                    return sprites[1].contents().name();
+                    return spriteName(getSprites(), 1, "flowing");
                 }
 
                 @Nullable
                 @Override
                 public ResourceLocation getOverlayTexture() {
                     TextureAtlasSprite[] sprites = getSprites();
-                    return sprites.length > 2 ? sprites[2].contents().name() : null;
+                    return sprites.length > 2 && sprites[2] != null ? sprites[2].contents().name() : null;
                 }
 
                 @Override
